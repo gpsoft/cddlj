@@ -1,0 +1,46 @@
+{:table :t_lesson
+ :name "レッスン"
+ :collation :utf8_unicode_ci
+ :columns [:lesson_id {:name "レッスンID"
+                       :type [:int 11]
+                       :flags #{:pk? :seq?}
+                       }
+           :lesson_nm {:name "レッスン名"
+                       :type [:varchar 20]}
+           :sta_date {:name "開始日"
+                      :type :date-str}
+           :end_date {:name "終了日"
+                      :type :date-str}
+           :lesson_fee {:name "料金"
+                        :type :int}
+           :deadline {:name "申込締切日時"
+                      :type :datetime-str}
+           ]
+ }
+
+{:table :m_teacher
+ :name "講師マスター"
+ :collation :utf8_unicode_ci
+ :engine :innodb
+ :del-kbn? true
+ :timestamp? true
+ :comment "暫定バージョンです。"
+ :columns [:teacher_no {:name "講師No"
+                        :type [:int 11]
+                        :flags #{:pk? :seq?}
+                        }
+           :teacher_nm {:name "講師名"
+                        :type :blob
+                        :flags #{:nullable?}
+                        :comment "講師名(暗号化)"
+                        }
+           :gr_nm {:name "所属名"
+                   :type [:varchar 10 :utf8_general_ci]
+                   :default ""
+                   :index "idx1"
+                   }
+           :birthdate {:name "生年月日"
+                       :type :date-str
+                       :flags #{:nullable?}}
+           ]
+ }
