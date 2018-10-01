@@ -6,7 +6,11 @@
   :dependencies [[org.clojure/clojure "1.9.0"]
                  [org.clojure/tools.cli "0.4.1"]
                  [dk.ative/docjure "1.12.0"]
-                 [expound "0.7.1"]]
+                 [expound "0.7.1"]
+                 [korma "0.4.3"]
+                 [mysql/mysql-connector-java "5.1.47"]]
+  :java-source-paths ["javasrc"]
   :main ^:skip-aot cddlj.core
   :target-path "target/%s"
+  ; :jvm-opts ["-Djdbc.drivers=com.mysql.jdbc.Driver"]
   :profiles {:uberjar {:aot :all}})

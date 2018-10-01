@@ -4,9 +4,12 @@
     [clojure.spec.alpha :as s]
     [clojure.tools.cli :refer [parse-opts]]
     [dk.ative.docjure.spreadsheet :as x]
+    [korma.core :as korma]
+    [korma.db :as db]
     [cddlj.spec :refer [validate-schemas]])
+  (:import
+    name.fraser.neil.plaintext.diff_match_patch)
   (:gen-class))
-
 
 (comment
   (let [wb (x/create-workbook "Price List"
@@ -32,6 +35,11 @@
   (validate-schemas (read-edn-all "schema.edn"))
   (sql ["sql" "schema.edn" "out.sql"] {})
   (xls ["xls" "schema.edn" "out.xlsx"] {})
+  (let [dmp (diff_match_patch.)
+        diff (.diff_main dmp "Hello World" "Goobye World")
+        _ (.diff_cleanupEfficiency dmp diff)
+        html (.diff_prettyHtml dmp diff)]
+    (spit "diff.html" html))
   )
 
 (defn- read-edn-all
@@ -56,11 +64,12 @@
               :datetime-str 14
               :time-str4 4
               :time-str6 6})]
-    ["VARCHAR" l]))
+    ["varchar" l]))
 
 (defn- col-type-name
   [k]
-  (clojure.string/upper-case (name k)))
+  #_(clojure.string/upper-case (name k))
+  (name k))
 
 (defn- col-type
   [k_or_v]
@@ -102,7 +111,7 @@
 (defn- render-column
   [[nm {lnm :name t :type flags :flags cm :comment}]]
   (str
-    (name nm)
+    (str "`" (name nm) "`")
     " "
     (render-type t)
     (render-col-comment lnm cm)))
@@ -125,7 +134,7 @@
 (defn- sql-render
   [{:keys [table collation engine del-kbn? timestamp? columns] :as sch}]
   (str "CREATE TABLE "
-       (name table)
+       (str "`" (name table) "`")
        " (" \newline
        (render-columns columns)
        ")" \newline
@@ -178,9 +187,54 @@
     (when (validate-schemas schs)
       (xls-out schs out-file opts))) )
 
+(defn- diff-html
+  [left right]
+  (let [dmp (diff_match_patch.)
+        diff (.diff_main dmp left right)
+        _ (.diff_cleanupEfficiency dmp diff)]
+    (.diff_prettyHtml dmp diff)))
+
+(defn- diff-ddl
+  [table]
+  (let [rs (korma/exec-raw (str "SHOW CREATE TABLE " table) :results)]
+    ((keyword "Create Table") (first rs))))
+
+(defn- diff
+  [[_ edn-path out-file] opts]
+  (let [schs (read-edn-all edn-path)]
+    (when (validate-schemas schs)
+      (let [sql (->> schs
+                     (map sql-render)
+                     (apply str))
+            db-map {:db (:db opts)
+                    :user (:user opts)
+                    :password (:pass opts)
+                    :host (:host opts)
+                    :port "3306"
+                    :classname "com.mysql.jdbc.Driver"
+                    :subprotocol "mysql"
+                    :subname "//localhost:3306/cddlj?useSSL=false"
+                    }
+            hoge (db/defdb db (db/mysql db-map))
+            ; rs (korma/exec-raw "SELECT * FROM m_teacher" :results)
+            ; rs (korma/exec-raw "DESC m_teacher" :results)
+            ; rs (korma/exec-raw "SHOW TABLES" :results)
+            ; rs (korma/exec-raw "SHOW CREATE TABLE m_teacher" :results)
+            ddl (->> schs
+                    (map (comp diff-ddl name :table))
+                    (apply str))
+            _ (prn ddl)
+            ]
+        (spit "diff.html" (str "<html lang=\"ja\"><head><meta charset=\"utf-8\"></head><body>" (diff-html sql ddl) "</body></html>") )))))
+
 (def cli-options
   ;; An option with a required argument
-  [["-p" "--port PORT" "Port number"
+  [[nil "--host DBHOST" "DB server"
+    :default "localhost"]
+   [nil "--db DBNAME" "Database name"]
+   [nil "--user USER" "Account for DB"]
+   [nil "--pass PASSWORD" "Password for DB"]
+   ["-p" "--port PORT" "Port number"
     :default 80
     :parse-fn #(Integer/parseInt %)
     :validate [#(< 0 % 0x10000) "Must be a number between 0 and 65536"]]
@@ -201,6 +255,7 @@
   (println "Example:")
   (println "  cddlj sql schema.edn out.sql")
   (println "  cddlj xls schema.edn out.xlsx")
+  (println "  cddlj --db cddlj --user root --pass mysql diff schema.edn")
   (println "")
   (println " OPTS:")
   (println summary)
@@ -211,7 +266,7 @@
   [args]
   (or
     (empty? args)
-    (not (#{"sql" "xls"} (first args)))))
+    (not (#{"sql" "xls" "diff"} (first args)))))
 
 (defn -main
   ""
@@ -220,6 +275,7 @@
         (parse-opts args cli-options)]
     (if (or (:help options) (invalid-args? arguments))
       (exit-with-usage summary)
-      (if (= (first arguments) "sql")
-        (sql arguments options)
-        (xls arguments options)))))
+      (case (first arguments)
+        "sql" (sql arguments options)
+        "xls" (xls arguments options)
+        "diff" (diff arguments options)))))
