@@ -8,7 +8,8 @@
                  [dk.ative/docjure "1.12.0"]
                  [expound "0.7.1"]
                  [korma "0.4.3"]
-                 [mysql/mysql-connector-java "5.1.47"]]
+                 [mysql/mysql-connector-java "5.1.47"]
+                 [ch.qos.logback/logback-classic "1.2.3"]]
   :java-source-paths ["javasrc"]
   :main ^:skip-aot cddlj.core
   :target-path "target/%s"
