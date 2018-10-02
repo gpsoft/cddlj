@@ -6,6 +6,7 @@
     [dk.ative.docjure.spreadsheet :as x]
     [korma.core :as korma]
     [korma.db :as db]
+    [cddlj.util :refer :all]
     [cddlj.spec :refer [validate-schemas]])
   (:import
     name.fraser.neil.plaintext.diff_match_patch)
@@ -30,11 +31,18 @@
     (.removeSheetAt wb (.getSheetIndex wb "Price List"))
     (x/save-workbook! "yes.xlsx" wb))
   (with-open [in (java.io.PushbackReader. (clojure.java.io/reader "schema.edn"))]
-      (let [edn-seq (repeatedly #(clojure.edn/read {:eof :the-end} in))]
-        (doall (take-while #(not= :the-end %) edn-seq))))
+    (let [edn-seq (repeatedly #(clojure.edn/read {:eof :the-end} in))]
+      (doall (take-while #(not= :the-end %) edn-seq))))
   (validate-schemas (read-edn-all "schema.edn"))
   (sql ["sql" "schema.edn" "out.sql"] {})
   (xls ["xls" "schema.edn" "out.xlsx"] {})
+  (diff ["diff" "schema.edn" "diff.html"]
+        {:host "localhost"
+         :db "cddlj"
+         :port "3306"
+         :user "root"
+         :pass "mysql"
+         })
   (let [dmp (diff_match_patch.)
         diff (.diff_main dmp "Hello World" "Goobye World")
         _ (.diff_cleanupEfficiency dmp diff)
@@ -42,116 +50,109 @@
     (spit "diff.html" html))
   )
 
-(defn- read-edn-all
-  [edn-path]
-  (with-open [in (-> edn-path
-                     clojure.java.io/reader
-                     (java.io.PushbackReader.))]
-    (let [edn-seq (repeatedly #(clojure.edn/read {:eof :the-end} in))]
-      (doall (take-while #(not= :the-end %) edn-seq)))))
+
+(def ^:private default-collation :utf8_unicode_ci)
 
 (defn- render-engine
   [engine]
   "InnoDB")
 
-(defn- custom-type?
+(defn- custom-col-type?
   [k]
-  (#{:date-str :datetime-str :time-str4 :time-str6} k))
+  (let [ts #{:date-str
+             :datetime-str
+             :time-str4
+             :time-str6}]
+    (ts k)))
 
-(defn- custom-type
+(defn- custom-col-type
   [k]
   (let [l (k {:date-str 8
               :datetime-str 14
               :time-str4 4
               :time-str6 6})]
-    ["varchar" l]))
+    [:varchar l default-collation]))
 
 (defn- col-type-name
   [k]
-  #_(clojure.string/upper-case (name k))
   (name k))
 
 (defn- col-type
   [k_or_v]
   (if (keyword? k_or_v)
-    (if (custom-type? k_or_v)
-      (custom-type k_or_v)
-      [(col-type-name k_or_v) nil])
-    (let [[t l c] k_or_v]
-      [(col-type-name t) l c])))
+    (if (custom-col-type? k_or_v)
+      (custom-col-type k_or_v)
+      [k_or_v nil default-collation])
+    k_or_v))
 
 (defn- render-type
   [k_or_v]
   (let [[t l c] (col-type k_or_v)]
     (str
-      t
-      (when l
-        (str "(" l ")"))
+      (name t)
+      (when l (wrap-par l))
       (when c
         (str " COLLATE " (name c))))))
 
 (defn- render-table-comment
   [lnm cm]
   (str
-    " COMMENT '"
-    (if cm cm (str lnm "テーブル"))
-    "'"))
+    "COMMENT="
+    (wrap-sq (if cm cm (str lnm "テーブル")))))
 
 (defn- col-comment
   [lnm cm]
-  (if cm cm lnm))
+  (if cm (str lnm (wrap-par cm)) lnm))
 
 (defn- render-col-comment
   [lnm cm]
   (str
-    " COMMENT '"
-    (col-comment lnm cm)
-    "'"))
+    "COMMENT "
+    (wrap-sq (col-comment lnm cm))))
 
 (defn- render-column
   [[nm {lnm :name t :type flags :flags cm :comment}]]
-  (str
-    (str "`" (name nm) "`")
-    " "
+  (concat-toks
+    (wrap-bt (name nm))
     (render-type t)
     (render-col-comment lnm cm)))
-
-(defn- join-lines
-  [lines]
-  (->> lines
-   (map #(str "    " %))
-   (clojure.string/join (str "," \newline))))
 
 (defn- render-columns
   [col-seq]
   (let [cols (partition 2 col-seq)]
-    (str
-      (->> cols
-           (map render-column)
-           join-lines)
-      \newline)))
+    (crlf (->> cols
+               (map render-column)
+               (join-lines "    " ",")))))
 
 (defn- sql-render
   [{:keys [table collation engine del-kbn? timestamp? columns] :as sch}]
-  (str "CREATE TABLE "
-       (str "`" (name table) "`")
-       " (" \newline
+  (str (concat-toks
+         "CREATE TABLE"
+         (wrap-bt (name table))
+         (crlf "("))
        (render-columns columns)
-       ")" \newline
-       " ENGINE=" (render-engine engine)
-       " DEFAULT COLLATE " (name collation)
-       (render-table-comment (:name sch) (:comment sch))
-       ";"
-       \newline \newline))
+       (concat-toks
+         ")"
+         (str "ENGINE=" (render-engine engine))
+         "DEFAULT CHARSET=utf8"
+         (str "COLLATE=" (name collation))
+         (str (render-table-comment (:name sch) (:comment sch)) ";"))
+       (crlf "")))
+
+(defn- sql-render*
+  [schs]
+  (->> schs
+       (map sql-render)
+       (join-lines "" "")))
 
 (defn- sql
   [[_ edn-path out-file] opts]
   (let [schs (read-edn-all edn-path)]
     (when (validate-schemas schs)
       (->> schs
-           (map sql-render)
-           (apply str)
+           sql-render*
            (spit out-file)))))
+
 
 (defn- out-val
   [s c r v]
@@ -163,7 +164,7 @@
 (defn- out-column
   [s [nm {lnm :name t :type flags :flags cm :comment}]]
   (let [[t l c] (col-type t)]
-    (x/add-row! s [nil lnm (name nm) t l (col-comment lnm cm)])))
+    (x/add-row! s [nil lnm (name nm) (name t) l (col-comment lnm cm)])))
 
 (defn- xls-out
   [schs out-file opts]
@@ -187,6 +188,7 @@
     (when (validate-schemas schs)
       (xls-out schs out-file opts))) )
 
+
 (defn- diff-html
   [left right]
   (let [dmp (diff_match_patch.)
@@ -203,59 +205,49 @@
   [[_ edn-path out-file] opts]
   (let [schs (read-edn-all edn-path)]
     (when (validate-schemas schs)
-      (let [sql (->> schs
-                     (map sql-render)
-                     (apply str))
-            db-map {:db (:db opts)
-                    :user (:user opts)
-                    :password (:pass opts)
-                    :host (:host opts)
-                    :port "3306"
-                    :classname "com.mysql.jdbc.Driver"
-                    :subprotocol "mysql"
-                    :subname "//localhost:3306/cddlj?useSSL=false"
-                    }
-            hoge (db/defdb db (db/mysql db-map))
-            ; rs (korma/exec-raw "SELECT * FROM m_teacher" :results)
-            ; rs (korma/exec-raw "DESC m_teacher" :results)
-            ; rs (korma/exec-raw "SHOW TABLES" :results)
-            ; rs (korma/exec-raw "SHOW CREATE TABLE m_teacher" :results)
+      (let [sql (sql-render* schs)
+            {:keys [user pass host port db]} opts
+            connect-map {:user user
+                         :password pass
+                         :classname "com.mysql.jdbc.Driver"
+                         :subprotocol "mysql"
+                         :subname (str "//" host ":" port "/" db "?useSSL=false")}
+            _ (db/defdb conn (db/mysql connect-map))
             ddl (->> schs
-                    (map (comp diff-ddl name :table))
-                    (apply str))
-            _ (prn ddl)
-            ]
-        (spit "diff.html" (str "<html lang=\"ja\"><head><meta charset=\"utf-8\"></head><body>" (diff-html sql ddl) "</body></html>") )))))
+                     (map (comp #(str % (crlf ";")) diff-ddl name :table))
+                     (join-lines "" ""))]
+        (spit out-file
+              (str "<html lang=\"ja\"><head><meta charset=\"utf-8\"></head><body>"
+                   (diff-html sql ddl)
+                   "</body></html>") )))))
 
 (def cli-options
   ;; An option with a required argument
-  [[nil "--host DBHOST" "DB server"
+  [["-H" "--host DBHOST" "DB server"
     :default "localhost"]
-   [nil "--db DBNAME" "Database name"]
-   [nil "--user USER" "Account for DB"]
-   [nil "--pass PASSWORD" "Password for DB"]
-   ["-p" "--port PORT" "Port number"
-    :default 80
+   ["-p" "--port PORT" "Port number of the server"
+    :default 3306
     :parse-fn #(Integer/parseInt %)
     :validate [#(< 0 % 0x10000) "Must be a number between 0 and 65536"]]
-   ;; A non-idempotent option (:default is applied first)
-   ["-v" nil "Verbosity level"
-    :id :verbosity
-    :default 0
-    :update-fn inc] ; Prior to 0.4.1, you would have to use:
-                   ;; :assoc-fn (fn [m k _] (update-in m [k] inc))
-   ;; A boolean option defaulting to nil
+   [nil "--db DBNAME" "Name of database"]
+   ["-U" "--user USER" "Account for DB"]
+   ["-P" "--pass PASSWORD" "Password for DB"]
    ["-h" "--help"]])
 
 (defn- exit-with-usage
   [summary]
   (println "Usage:")
-  (println "  cddlj [OPTS] ARGS...")
+  (println "  cddlj [OPTS] COMMAND ARGS...")
+  (println "")
+  (println "COMMAND:")
+  (println "    sql: Output sql file for DDL.")
+  (println "    xls: Output excel document.")
+  (println "   diff: Show the difference between schema(edn) and DB in html format.")
   (println "")
   (println "Example:")
   (println "  cddlj sql schema.edn out.sql")
   (println "  cddlj xls schema.edn out.xlsx")
-  (println "  cddlj --db cddlj --user root --pass mysql diff schema.edn")
+  (println "  cddlj --db cddlj -U root -P mysql diff schema.edn diff.html")
   (println "")
   (println " OPTS:")
   (println summary)
@@ -265,15 +257,21 @@
 (defn- invalid-args?
   [args]
   (or
-    (empty? args)
+    (not= 3 (count args))
     (not (#{"sql" "xls" "diff"} (first args)))))
+
+(defn- invalid-opts?
+  [[cmd] opts]
+  false)
 
 (defn -main
   ""
   [& args]
   (let [{:keys [options arguments summary]}
         (parse-opts args cli-options)]
-    (if (or (:help options) (invalid-args? arguments))
+    (if (or (:help options)
+            (invalid-args? arguments)
+            (invalid-opts? arguments options))
       (exit-with-usage summary)
       (case (first arguments)
         "sql" (sql arguments options)
