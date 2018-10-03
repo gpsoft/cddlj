@@ -2,6 +2,11 @@
   (:require
     [clojure.string :as s]))
 
+(defn tap
+  [e]
+  (prn e)
+  e)
+
 (defn read-edn-all
   [edn-path]
   (with-open [in (-> edn-path
@@ -24,15 +29,25 @@
 
 (defn concat-toks
   [& toks]
-  (s/join " " toks))
+  (->> toks
+       (remove empty?)
+       (s/join " ")))
 
-(defn crlf
-  ([s] (crlf s 1))
+(defn eol
+  ([s] (eol s 1))
   ([s n]
-   (apply str s (repeat n "\n"))))
+   (apply str s (repeat n \newline))))
 
 (defn join-lines
   [indent sepa lines]
   (->> lines
        (map #(str indent %))
-       (clojure.string/join (crlf sepa))))
+       (clojure.string/join (eol sepa))))
+
+(defn deep-merge-with [f & maps]
+  (apply
+    (fn m [& maps]
+      (if (every? map? maps)
+        (apply merge-with m maps)
+        (apply f maps)))
+    maps))

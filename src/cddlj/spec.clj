@@ -1,7 +1,8 @@
 (ns cddlj.spec
   (:require
     [clojure.spec.alpha :as s]
-    [expound.alpha :refer [expound]]))
+    [expound.alpha :refer [expound]]
+    [cddlj.util :refer :all]))
 
 (s/def ::table keyword?)
 
@@ -22,3 +23,10 @@
   (if (s/valid? ::schemas schs)
     true
     (expound ::schema schs)))
+
+(defn apply-default
+  [schs]
+  (let [def-m {:deleted? true
+               :timestamp? true}]
+    (map #(deep-merge-with (fn [x y] y) def-m %)
+         schs)))

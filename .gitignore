@@ -7,4 +7,5 @@ target/
 
 out.sql
 out.xlsx
-diff.html
+out.html
+resources/config.edn

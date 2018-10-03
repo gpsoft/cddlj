@@ -1,7 +1,26 @@
-{:table :t_lesson
+{
+ ;; テーブル名
+ :table :t_lesson
+
+ ;; テーブルの論理名
  :name "レッスン"
+
+ ;; テーブルのcollation
  :collation :utf8_unicode_ci
- :columns [:lesson_id {:name "レッスンID"
+
+ ;; 各カラムの仕様
+ :columns [
+           ;; カラム名と属性
+           ;; 属性に指定できるのは:
+           ;;   :name       カラムの論理名
+           ;;   :type       [型 桁数 (collation)]
+           ;;               または、型のみ
+           ;; 以下、省略可能:
+           ;;   :flags      :pk?, :seq?, nullable?
+           ;;   :default    デフォルト値
+           ;;   :index      インデックスにするなら、その名前
+           ;;   :comment    カラムのコメント
+           :lesson_id {:name "レッスンID"
                        :type [:int 11]
                        :flags #{:pk? :seq?}
                        }
@@ -12,18 +31,26 @@
            :end_date {:name "終了日"
                       :type :date-str}
            :lesson_fee {:name "料金"
-                        :type :int}
+                        :type :int
+                        :flags #{:nullable?}}
            :deadline {:name "申込締切日時"
                       :type :datetime-str}
            ]
+
+ ;; 以下、省略可能:
+ ;; :engine      :innodbのみサポート
+ ;; :deleted?    論理削除用のカラムが必要か? デフォルトはtrue
+ ;; :timestamp?  タイムスタンプ用のカラムが必要か? デフォルトはtrue
+ ;; :comment     テーブルのコメント
  }
+
 
 {:table :m_teacher
  :name "講師マスター"
  :collation :utf8_unicode_ci
  :engine :innodb
- :del-kbn? true
- :timestamp? true
+ :deleted? false
+ :timestamp? false
  :comment "暫定バージョンです。"
  :columns [:teacher_no {:name "講師No"
                         :type [:int 11]

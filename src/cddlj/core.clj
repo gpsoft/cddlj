@@ -6,11 +6,14 @@
     [dk.ative.docjure.spreadsheet :as x]
     [korma.core :as korma]
     [korma.db :as db]
+    [aero.core :refer [read-config]]
     [cddlj.util :refer :all]
-    [cddlj.spec :refer [validate-schemas]])
+    [cddlj.spec :refer [validate-schemas apply-default]])
   (:import
     name.fraser.neil.plaintext.diff_match_patch)
   (:gen-class))
+
+(def config (read-config (clojure.java.io/resource "config.edn")))
 
 (comment
   (let [wb (x/create-workbook "Price List"
@@ -65,13 +68,33 @@
              :time-str6}]
     (ts k)))
 
+(defn- char-type?
+  [k]
+  (let [ts #{:char
+             :varchar
+             :text}]
+    (ts k)))
+
+(defn- default-to-null?
+  [k]
+  (let [ts #{:blob
+             :tinyblob
+             :text}]
+    (not (ts k))))
+
+(defn- charset-from-collation
+  [c]
+  (let [cs {:utf8_general_ci :utf8
+            :utf8mb4_general_ci :utf8mb4}]
+    (c cs)))
+
 (defn- custom-col-type
   [k]
   (let [l (k {:date-str 8
               :datetime-str 14
               :time-str4 4
               :time-str6 6})]
-    [:varchar l default-collation]))
+    [:char l default-collation]))
 
 (defn- col-type-name
   [k]
@@ -79,20 +102,40 @@
 
 (defn- col-type
   [k_or_v]
-  (if (keyword? k_or_v)
-    (if (custom-col-type? k_or_v)
-      (custom-col-type k_or_v)
-      [k_or_v nil default-collation])
-    k_or_v))
+  (let [v (if (keyword? k_or_v)
+            (if (custom-col-type? k_or_v)
+              (custom-col-type k_or_v)
+              [k_or_v nil nil])
+            k_or_v)]
+    (let [[t l c] v]
+      (if (char-type? t)
+        [t l (or c default-collation)]
+        v))))
+
+(defn- render-charset-or-collation
+  [c]
+  (if-let [cset (charset-from-collation c)]
+    (concat-toks "CHARACTER SET" (name cset))
+    (concat-toks "COLLATE" (name c))))
 
 (defn- render-type
-  [k_or_v]
-  (let [[t l c] (col-type k_or_v)]
-    (str
-      (name t)
-      (when l (wrap-par l))
-      (when c
-        (str " COLLATE " (name c))))))
+  [[t l c]]
+  (str
+    (name t)
+    (when l (wrap-par l))
+    (when c (str " " (render-charset-or-collation c)))))
+
+(defn- render-default
+  [[t l c] fs d]
+  (if d
+    (concat-toks
+      "DEFAULT"
+      (if (string? d)
+        (wrap-sq d)
+        (str d)))
+    (when (and (default-to-null? t)
+               (:nullable? fs))
+      "DEFAULT NULL")))
 
 (defn- render-table-comment
   [lnm cm]
@@ -111,33 +154,63 @@
     (wrap-sq (col-comment lnm cm))))
 
 (defn- render-column
-  [[nm {lnm :name t :type flags :flags cm :comment}]]
-  (concat-toks
-    (wrap-bt (name nm))
-    (render-type t)
-    (render-col-comment lnm cm)))
+  [[nm {lnm :name t :type flags :flags default :default cm :comment}]]
+  (let [type-v (col-type t)]
+    (concat-toks
+      (wrap-bt (name nm))
+      (render-type type-v)
+      (when-not (:nullable? flags) "NOT NULL")
+      (render-default type-v flags default)
+      (render-col-comment lnm cm))))
 
-(defn- render-columns
+(defn- render-indices
+  [cols]
+  (let [pk (->> cols
+                (filter (fn [[nm {flags :flags}]] (:pk? flags)))
+                (map (comp wrap-bt name first))
+                (clojure.string/join ",")
+                wrap-par
+                (concat-toks "PRIMARY KEY"))
+        k nil]    ;; TODO: normal index key
+    (filter some? [pk k])))
+
+(defn- render-create-def
   [col-seq]
-  (let [cols (partition 2 col-seq)]
-    (crlf (->> cols
-               (map render-column)
-               (join-lines "    " ",")))))
+  (let [cols (partition 2 col-seq)
+        col-lines (map render-column cols)
+        key-lines (render-indices cols)]
+    (->> (concat col-lines key-lines)
+         (join-lines "    " ",")
+         eol)))
+
+(defn- append-deleted
+  [del? col-seq]
+  (if del?
+    (concat col-seq (:col-deleted config))
+    col-seq))
+
+(defn- append-timestamps
+  [ts? col-seq]
+  (if ts?
+    (concat col-seq (:cols-timestamp config))
+    col-seq))
 
 (defn- sql-render
-  [{:keys [table collation engine del-kbn? timestamp? columns] :as sch}]
-  (str (concat-toks
-         "CREATE TABLE"
-         (wrap-bt (name table))
-         (crlf "("))
-       (render-columns columns)
-       (concat-toks
-         ")"
-         (str "ENGINE=" (render-engine engine))
-         "DEFAULT CHARSET=utf8"
-         (str "COLLATE=" (name collation))
-         (str (render-table-comment (:name sch) (:comment sch)) ";"))
-       (crlf "")))
+  [{:keys [table collation engine deleted? timestamp? columns] :as sch}]
+  (let [columns (append-deleted deleted? columns)
+        columns (append-timestamps timestamp? columns)]
+    (str (concat-toks
+           "CREATE TABLE"
+           (wrap-bt (name table))
+           (eol "("))
+         (render-create-def columns)
+         (concat-toks
+           ")"
+           (str "ENGINE=" (render-engine engine))
+           "DEFAULT CHARSET=utf8"
+           (str "COLLATE=" (name collation))
+           (str (render-table-comment (:name sch) (:comment sch))))
+         (eol ";"))))
 
 (defn- sql-render*
   [schs]
@@ -150,6 +223,7 @@
   (let [schs (read-edn-all edn-path)]
     (when (validate-schemas schs)
       (->> schs
+           apply-default
            sql-render*
            (spit out-file)))))
 
@@ -170,7 +244,7 @@
   [schs out-file opts]
   (let [wb (x/load-workbook-from-resource "template.xlsx")]
     (dorun
-      (for [{:keys [table collation engine del-kbn? timestamp? columns] :as sch} schs]
+      (for [{:keys [table collation engine deleted? timestamp? columns] :as sch} schs]
         (let [s (.cloneSheet wb (.getSheetIndex wb "table"))]
           (.setSheetName wb (.getSheetIndex wb (.getSheetName s)) (:name sch))
           (out-val s 2 1 (:name sch))
@@ -186,7 +260,9 @@
   [[_ edn-path out-file] opts]
   (let [schs (read-edn-all edn-path)]
     (when (validate-schemas schs)
-      (xls-out schs out-file opts))) )
+      (xls-out (apply-default schs)
+               out-file
+               opts))) )
 
 
 (defn- diff-html
@@ -205,7 +281,7 @@
   [[_ edn-path out-file] opts]
   (let [schs (read-edn-all edn-path)]
     (when (validate-schemas schs)
-      (let [sql (sql-render* schs)
+      (let [sql (sql-render* (apply-default schs))
             {:keys [user pass host port db]} opts
             connect-map {:user user
                          :password pass
@@ -214,7 +290,8 @@
                          :subname (str "//" host ":" port "/" db "?useSSL=false")}
             _ (db/defdb conn (db/mysql connect-map))
             ddl (->> schs
-                     (map (comp #(str % (crlf ";")) diff-ddl name :table))
+                     apply-default
+                     (map (comp #(str % (eol ";")) diff-ddl name :table))
                      (join-lines "" ""))]
         (spit out-file
               (str "<html lang=\"ja\"><head><meta charset=\"utf-8\"></head><body>"

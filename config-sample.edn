@@ -1,0 +1,11 @@
+{
+ ;; 論理削除用のカラム
+ :col-deleted [:deleted {:name "削除フラグ"
+                         :type :int
+                         :default 0}]
+
+ ;; タイムスタンプ用のカラム群
+ :cols-timestamp [:created_at {:name "作成日時"
+                               :type :datetime}
+                  :modifed_at {:name "更新日時"
+                               :type :datetime}]}
