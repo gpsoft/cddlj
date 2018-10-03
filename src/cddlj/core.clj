@@ -245,7 +245,9 @@
   (let [wb (x/load-workbook-from-resource "template.xlsx")]
     (dorun
       (for [{:keys [table collation engine deleted? timestamp? columns] :as sch} schs]
-        (let [s (.cloneSheet wb (.getSheetIndex wb "table"))]
+        (let [s (.cloneSheet wb (.getSheetIndex wb "table"))
+              columns (append-deleted deleted? columns)
+              columns (append-timestamps timestamp? columns)]
           (.setSheetName wb (.getSheetIndex wb (.getSheetName s)) (:name sch))
           (out-val s 2 1 (:name sch))
           (out-val s 2 2 (name table))
