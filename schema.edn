@@ -59,7 +59,7 @@
            :teacher_nm {:name "講師名"
                         :type :blob
                         :flags #{:nullable?}
-                        :comment "講師名(暗号化)"
+                        :comment "暗号化して保存"
                         }
            :gr_nm {:name "所属名"
                    :type [:varchar 10 :utf8_general_ci]

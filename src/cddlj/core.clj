@@ -62,10 +62,10 @@
 
 (defn- custom-col-type?
   [k]
-  (let [ts #{:date-str
-             :datetime-str
-             :time-str4
-             :time-str6}]
+  (let [ts #{:date-str      ; "yyyymmdd"
+             :datetime-str  ; "yyyymmddhhmmss"
+             :time-str4     ; "hhmm"
+             :time-str6}]   ; "hhmmss"
     (ts k)))
 
 (defn- char-type?
@@ -163,16 +163,34 @@
       (render-default type-v flags default)
       (render-col-comment lnm cm))))
 
+(defn- render-key
+  [pk? ix-nm cols]
+  (let [cs (map (comp wrap-bt name) cols)]
+    (concat-toks
+      (when pk? "PRIMARY")
+      "KEY"
+      (when ix-nm (wrap-bt ix-nm))
+      (wrap-par (clojure.string/join "," cs)))))
+
+(defn- render-index
+  [[ix-nm vs]]
+  (render-key
+    false
+    ix-nm
+    (map second vs)))
+
 (defn- render-indices
   [cols]
   (let [pk (->> cols
-                (filter (fn [[nm {flags :flags}]] (:pk? flags)))
-                (map (comp wrap-bt name first))
-                (clojure.string/join ",")
-                wrap-par
-                (concat-toks "PRIMARY KEY"))
-        k nil]    ;; TODO: normal index key
-    (filter some? [pk k])))
+                (filter (fn [[_ {flags :flags}]] (:pk? flags)))
+                (map first)
+                (render-key true nil))
+        ks (->> cols
+                (map (fn [[nm {index :index}]] (when index [index nm])))
+                (filter some?)
+                (group-by first)
+                (map render-index))]
+    (filter some? (conj ks pk))))
 
 (defn- render-create-def
   [col-seq]
@@ -238,7 +256,7 @@
 (defn- out-column
   [s [nm {lnm :name t :type flags :flags cm :comment}]]
   (let [[t l c] (col-type t)]
-    (x/add-row! s [nil lnm (name nm) (name t) l (col-comment lnm cm)])))
+    (x/add-row! s [nil lnm (name nm) (name t) l cm])))
 
 (defn- xls-out
   [schs out-file opts]
@@ -297,6 +315,8 @@
                      (join-lines "" ""))]
         (spit out-file
               (str "<html lang=\"ja\"><head><meta charset=\"utf-8\"></head><body>"
+                   "<div><h3 style=\"background:#ffe6e6;\">" edn-path "</div>"
+                   "<div><h3 style=\"background:#e6ffe6;\">" db "@" host "</div>"
                    (diff-html sql ddl)
                    "</body></html>") )))))
 
