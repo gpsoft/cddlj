@@ -34,6 +34,10 @@
     (x/set-cell! cell "YES!")
     (.removeSheetAt wb (.getSheetIndex wb "Price List"))
     (x/save-workbook! "yes.xlsx" wb))
+  (let [wb (x/load-workbook-from-resource "template.xlsx")
+        sh (x/select-sheet "table" wb)]
+    #_(read-cell sh "C2")
+    (select-columns sh {:B :hoge :C :fuga}))
   (with-open [in (java.io.PushbackReader. (clojure.java.io/reader "schema.edn"))]
     (let [edn-seq (repeatedly #(clojure.edn/read {:eof :the-end} in))]
       (doall (take-while #(not= :the-end %) edn-seq))))
@@ -246,6 +250,22 @@
            sql-render*
            (spit out-file)))))
 
+
+(defn- coerce-cell-value
+  [v]
+  (cond
+    (nil? v) ""
+    (number? v) (if (= v (double (int v))) (int v) v)
+    :else v))
+(defn- read-cell
+  [sh addr]
+  (let [cl (x/select-cell addr sh)
+        v (x/read-cell cl)]
+    (coerce-cell-value v)))
+(defn- select-columns
+  [sh m]
+  (let [es (x/select-columns m sh)]
+    (mapv #(map-vals coerce-cell-value %) es)))
 
 (defn- out-val
   [s c r v]

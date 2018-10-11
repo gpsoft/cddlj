@@ -51,3 +51,7 @@
         (apply merge-with m maps)
         (apply f maps)))
     maps))
+
+(defn map-vals [f m]
+  (into (empty m)
+        (for [[k v] m] [k (f v)])))
