@@ -301,23 +301,26 @@
   [[_ edn-path out-file] opts]
   (let [schs (read-edn-all edn-path)]
     (when (validate-schemas schs)
-      (let [sql (sql-render* (apply-default schs))
-            {:keys [user pass host port db]} opts
+      (let [{:keys [user pass host port db]} opts
             connect-map {:user user
                          :password pass
                          :classname "com.mysql.jdbc.Driver"
                          :subprotocol "mysql"
                          :subname (str "//" host ":" port "/" db "?useSSL=false")}
             _ (db/defdb conn (db/mysql connect-map))
-            ddl (->> schs
-                     apply-default
-                     (map (comp #(str % (eol ";")) diff-ddl name :table))
-                     (join-lines "" ""))]
+            diffs (for [sch (apply-default schs)]
+                    (let [sql (sql-render sch)
+                          ddl (-> sch
+                                  :table
+                                  name
+                                  diff-ddl
+                                  (str (eol ";")))]
+                      (diff-html sql ddl)))]
         (spit out-file
               (str "<html lang=\"ja\"><head><meta charset=\"utf-8\"></head><body>"
                    "<div><h3 style=\"background:#ffe6e6;\">" edn-path "</div>"
                    "<div><h3 style=\"background:#e6ffe6;\">" db "@" host "</div>"
-                   (diff-html sql ddl)
+                   (clojure.string/join "<br/>" diffs)
                    "</body></html>") )))))
 
 (def cli-options
