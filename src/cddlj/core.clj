@@ -10,7 +10,8 @@
     [cddlj.util :refer :all]
     [cddlj.spec :refer [validate-schemas apply-default]])
   (:import
-    name.fraser.neil.plaintext.diff_match_patch)
+    name.fraser.neil.plaintext.diff_match_patch
+    com.mysql.jdbc.exceptions.jdbc4.MySQLSyntaxErrorException)
   (:gen-class))
 
 (def config (read-config (clojure.java.io/resource "config.edn")))
@@ -294,8 +295,11 @@
 
 (defn- diff-ddl
   [table]
-  (let [rs (korma/exec-raw (str "SHOW CREATE TABLE " table) :results)]
-    ((keyword "Create Table") (first rs))))
+  (try
+    (let [rs (korma/exec-raw (str "SHOW CREATE TABLE " table) :results)]
+      ((keyword "Create Table") (first rs)))
+    (catch MySQLSyntaxErrorException ex
+            "The table doesn't seem to exist")))
 
 (defn- diff
   [[_ edn-path out-file] opts]
