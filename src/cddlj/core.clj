@@ -1,20 +1,22 @@
 (ns cddlj.core
   (:require
     clojure.edn
-    [clojure.spec.alpha :as s]
     [clojure.tools.cli :refer [parse-opts]]
     [dk.ative.docjure.spreadsheet :as x]
     [korma.core :as korma]
     [korma.db :as db]
-    [aero.core :refer [read-config]]
+    [aero.core :refer [read-config root-resolver]]
     [cddlj.util :refer :all]
     [cddlj.spec :refer [validate-schemas apply-default]])
   (:import
     name.fraser.neil.plaintext.diff_match_patch
+    org.apache.poi.ss.util.CellReference
     com.mysql.jdbc.exceptions.jdbc4.MySQLSyntaxErrorException)
   (:gen-class))
 
-(def config (read-config (clojure.java.io/resource "config.edn")))
+(def config (read-config
+              (clojure.java.io/resource "config.edn")
+              {:resolver root-resolver}))
 
 (comment
   (let [wb (x/create-workbook "Price List"
@@ -80,7 +82,7 @@
              :text}]
     (ts k)))
 
-(defn- default-to-null?
+(defn- default-to-null-type?
   [k]
   (let [ts #{:blob
              :tinyblob
@@ -138,7 +140,7 @@
       (if (string? d)
         (wrap-sq d)
         (str d)))
-    (when (and (default-to-null? t)
+    (when (and (default-to-null-type? t)
                (:nullable? fs))
       "DEFAULT NULL")))
 
@@ -267,32 +269,62 @@
   (let [es (x/select-columns m sh)]
     (mapv #(map-vals coerce-cell-value %) es)))
 
+(defn- get-or-create-row
+  [sh r]
+  (let [row (.getRow sh r)]
+    (if (nil? row)
+      (.createRow sh r)
+      row)))
 (defn- out-val
   [s c r v]
-  (-> s
-      (.getRow r)
-      (.createCell c)
-      (x/set-cell! v)))
+  (let [c (if (number? c)
+            c
+            (CellReference/convertColStringToIndex c))]
+    (-> s
+        (get-or-create-row r)
+        (.createCell c)
+        (x/set-cell! v))))
+
+(defn- col-map-to-values
+  [m]
+  (for [c (range 100)
+        :let [cname (keyword (CellReference/convertNumToColString c))]]
+    (cname m)))
 
 (defn- out-column
-  [s [nm {lnm :name t :type flags :flags cm :comment}]]
+  [s ix [nm {lnm :name t :type flags :flags default :default cm :comment}]]
   (let [[t l c] (col-type t)]
-    (x/add-row! s [nil lnm (name nm) (name t) l cm])))
+    (x/add-row! s (col-map-to-values
+                    {:A (inc ix)
+                     :C lnm
+                     :N (name nm)
+                     :Y (when (:pk? flags) "○")
+                     :AH (when-not (:nullable? flags) "○")
+                     :AU (name t)
+                     :AY l
+                     :BC default
+                     :BH cm}))))
 
 (defn- xls-out
   [schs out-file opts]
-  (let [wb (x/load-workbook-from-resource "template.xlsx")]
+  (let [wb (x/load-workbook-from-resource "template.xlsx")
+        {{project-name :name project-code :code} :project} config]
     (dorun
       (for [{:keys [table collation engine deleted? timestamp? columns] :as sch} schs]
         (let [s (.cloneSheet wb (.getSheetIndex wb "table"))
               columns (append-deleted deleted? columns)
               columns (append-timestamps timestamp? columns)]
           (.setSheetName wb (.getSheetIndex wb (.getSheetName s)) (:name sch))
-          (out-val s 2 1 (:name sch))
-          (out-val s 2 2 (name table))
+          ;; A B C D E
+          (out-val s "A" 0 (str project-name " エンティティ設計"))
+          (out-val s "AG" 0 (name project-code))
+          (out-val s "AG" 1 (name project-name))
+          (out-val s "N" 3 (name table))
+          (out-val s "AQ" 3 (:name sch))
+          (out-val s "N" 4 (:comment sch))
           (let [cols (partition 2 columns)]
             (dorun
-              (map #(out-column s %) cols)))
+              (map-indexed #(out-column s %1 %2) cols)))
           )))
     (.removeSheetAt wb (.getSheetIndex wb "table"))
     (x/save-workbook! out-file wb)))
@@ -313,7 +345,16 @@
         _ (.diff_cleanupEfficiency dmp diff)]
     (.diff_prettyHtml dmp diff)))
 
-(defn- diff-ddl
+(defn- connect-db
+  [{:keys [user pass host port db]}]
+  (let [connect-map {:user user
+                     :password pass
+                     :classname "com.mysql.jdbc.Driver"
+                     :subprotocol "mysql"
+                     :subname (str "//" host ":" port "/" db "?useSSL=false")}]
+    (db/defdb conn (db/mysql connect-map))))
+
+(defn- query-ddl*
   [table]
   (try
     (let [rs (korma/exec-raw (str "SHOW CREATE TABLE " table) :results)]
@@ -321,34 +362,42 @@
     (catch MySQLSyntaxErrorException ex
             "The table doesn't seem to exist")))
 
+(defn- query-ddl
+  [sch]
+  (-> sch
+      :table
+      name
+      query-ddl*
+      (str (eol ";"))))
+
+(defn- mk-html
+  [inner-body]
+  (str "<html lang=\"ja\"><head><meta charset=\"utf-8\"></head><body>"
+       inner-body
+       "</body></html>"))
+(defn- mk-left-header
+  [caption]
+  (str "<h3 style=\"background:#ffe6e6;\">エンティティ定義: " caption "</h3>"))
+(defn- mk-right-header
+  [caption]
+  (str "<h3 style=\"background:#e6ffe6;\">実際のDB: " caption "</h3>"))
+
 (defn- diff
-  [[_ edn-path out-file] opts]
+  [[_ edn-path out-file] {:keys [host db] :as opts}]
   (let [schs (read-edn-all edn-path)]
     (when (validate-schemas schs)
-      (let [{:keys [user pass host port db]} opts
-            connect-map {:user user
-                         :password pass
-                         :classname "com.mysql.jdbc.Driver"
-                         :subprotocol "mysql"
-                         :subname (str "//" host ":" port "/" db "?useSSL=false")}
-            _ (db/defdb conn (db/mysql connect-map))
-            diffs (for [sch (apply-default schs)]
-                    (let [sql (sql-render sch)
-                          ddl (-> sch
-                                  :table
-                                  name
-                                  diff-ddl
-                                  (str (eol ";")))]
-                      (diff-html sql ddl)))]
-        (spit out-file
-              (str "<html lang=\"ja\"><head><meta charset=\"utf-8\"></head><body>"
-                   "<div><h3 style=\"background:#ffe6e6;\">" edn-path "</div>"
-                   "<div><h3 style=\"background:#e6ffe6;\">" db "@" host "</div>"
-                   (clojure.string/join "<br/>" diffs)
-                   "</body></html>") )))))
+      (connect-db opts)
+      (let [diffs (for [sch (apply-default schs)
+                        :let [sql (sql-render sch)
+                              ddl (query-ddl sch)]]
+                    (diff-html sql ddl))
+            html (mk-html (str
+                            (mk-left-header edn-path)
+                            (mk-right-header (str db "@" host))
+                            (clojure.string/join "<br/>" diffs)))]
+        (spit out-file html)))))
 
 (def cli-options
-  ;; An option with a required argument
   [["-H" "--host DBHOST" "DB server"
     :default "localhost"]
    ["-p" "--port PORT" "Port number of the server"
