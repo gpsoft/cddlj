@@ -1,4 +1,7 @@
 {
+ ;; プロジェクト属性
+ :project #include "./project.edn"
+
  ;; 論理削除用のカラム
  :col-deleted [:deleted {:name "削除フラグ"
                          :type :int

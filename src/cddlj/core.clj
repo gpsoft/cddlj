@@ -14,59 +14,21 @@
     com.mysql.jdbc.exceptions.jdbc4.MySQLSyntaxErrorException)
   (:gen-class))
 
-(def config (read-config
-              (clojure.java.io/resource "config.edn")
-              {:resolver root-resolver}))
 
-(comment
-  (let [wb (x/create-workbook "Price List"
-                              [["Name" "Price"]
-                               ["Foo Widget" 100]
-                               ["Bar Widget" 200]])
-        sheet (x/select-sheet "Price List" wb)
-        header-row (first (x/row-seq sheet))]
-    (x/set-row-style! header-row (x/create-cell-style! wb {:background :yellow
-                                                           :font {:bold true}}))
-    (x/save-workbook! "test.xlsx" wb))
-  (let [wb (x/load-workbook "test.xlsx")
-        s (.cloneSheet wb (.getSheetIndex wb "Price List"))
-        _ (.setSheetName wb (.getSheetIndex wb (.getSheetName s)) "hoge")
-        cell (->> s
-                  (x/select-cell "B3"))]
-    (x/set-cell! cell "YES!")
-    (.removeSheetAt wb (.getSheetIndex wb "Price List"))
-    (x/save-workbook! "yes.xlsx" wb))
-  (let [wb (x/load-workbook-from-resource "template.xlsx")
-        sh (x/select-sheet "table" wb)]
-    #_(read-cell sh "C2")
-    (select-columns sh {:B :hoge :C :fuga}))
-  (with-open [in (java.io.PushbackReader. (clojure.java.io/reader "schema.edn"))]
-    (let [edn-seq (repeatedly #(clojure.edn/read {:eof :the-end} in))]
-      (doall (take-while #(not= :the-end %) edn-seq))))
-  (validate-schemas (read-edn-all "schema.edn"))
-  (sql ["sql" "schema.edn" "out.sql"] {})
-  (xls ["xls" "schema.edn" "out.xlsx"] {})
-  (diff ["diff" "schema.edn" "diff.html"]
-        {:host "localhost"
-         :db "cddlj"
-         :port "3306"
-         :user "root"
-         :pass "mysql"
-         })
-  (let [dmp (diff_match_patch.)
-        diff (.diff_main dmp "Hello World" "Goobye World")
-        _ (.diff_cleanupEfficiency dmp diff)
-        html (.diff_prettyHtml dmp diff)]
-    (spit "diff.html" html))
-  )
-
+;;; --------------------------------------
+;; コンフィグ
+;; リソースのconfig.ednと
+;; カレントディレクトリのproject.edn
+(def ^:private config
+  (read-config
+    (clojure.java.io/resource "config.edn")
+    {:resolver root-resolver}))
 
 (def ^:private default-collation :utf8_unicode_ci)
 
-(defn- render-engine
-  [engine]
-  "InnoDB")
 
+;;; --------------------------------------
+;; スキーマ解釈
 (defn- custom-col-type?
   [k]
   (let [ts #{:date-str      ; "yyyymmdd"
@@ -89,13 +51,8 @@
              :text}]
     (not (ts k))))
 
-(defn- charset-from-collation
-  [c]
-  (let [cs {:utf8_general_ci :utf8
-            :utf8mb4_general_ci :utf8mb4}]
-    (c cs)))
-
 (defn- custom-col-type
+  "正規形へ"
   [k]
   (let [l (k {:date-str 8
               :datetime-str 14
@@ -103,11 +60,8 @@
               :time-str6 6})]
     [:char l default-collation]))
 
-(defn- col-type-name
-  [k]
-  (name k))
-
 (defn- col-type
+  "正規形へ"
   [k_or_v]
   (let [v (if (keyword? k_or_v)
             (if (custom-col-type? k_or_v)
@@ -119,9 +73,35 @@
         [t l (or c default-collation)]
         v))))
 
+(defn- append-deleted
+  [del? col-seq]
+  (if del?
+    (concat col-seq (:col-deleted config))
+    col-seq))
+
+(defn- append-timestamps
+  [ts? col-seq]
+  (if ts?
+    (concat col-seq (:cols-timestamp config))
+    col-seq))
+
+
+;;; --------------------------------------
+;; DDLレンダリング
+(defn- render-engine
+  [engine]
+  "InnoDB")
+
+(defn- maybe-charset
+  "collationよりcharsetを使う(かも)"
+  [c]
+  (let [cs {:utf8_general_ci :utf8
+            :utf8mb4_general_ci :utf8mb4}]
+    (c cs)))
+
 (defn- render-charset-or-collation
   [c]
-  (if-let [cset (charset-from-collation c)]
+  (if-let [cset (maybe-charset c)]
     (concat-toks "CHARACTER SET" (name cset))
     (concat-toks "COLLATE" (name c))))
 
@@ -148,17 +128,13 @@
   [lnm cm]
   (str
     "COMMENT="
-    (wrap-sq (if cm cm (str lnm "テーブル")))))
-
-(defn- col-comment
-  [lnm cm]
-  (if cm (str lnm (wrap-par cm)) lnm))
+    (wrap-sq (if cm cm lnm))))
 
 (defn- render-col-comment
   [lnm cm]
   (str
     "COMMENT "
-    (wrap-sq (col-comment lnm cm))))
+    (wrap-sq (if cm cm lnm))))
 
 (defn- render-column
   [[nm {lnm :name t :type flags :flags default :default cm :comment}]]
@@ -208,19 +184,7 @@
          (join-lines "    " ",")
          eol)))
 
-(defn- append-deleted
-  [del? col-seq]
-  (if del?
-    (concat col-seq (:col-deleted config))
-    col-seq))
-
-(defn- append-timestamps
-  [ts? col-seq]
-  (if ts?
-    (concat col-seq (:cols-timestamp config))
-    col-seq))
-
-(defn- sql-render
+(defn- render-table
   [{:keys [table collation engine deleted? timestamp? columns] :as sch}]
   (let [columns (append-deleted deleted? columns)
         columns (append-timestamps timestamp? columns)]
@@ -237,10 +201,10 @@
            (str (render-table-comment (:name sch) (:comment sch))))
          (eol ";"))))
 
-(defn- sql-render*
+(defn- render-table*
   [schs]
   (->> schs
-       (map sql-render)
+       (map render-table)
        (join-lines "" "")))
 
 (defn- sql
@@ -249,21 +213,25 @@
     (when (validate-schemas schs)
       (->> schs
            apply-default
-           sql-render*
+           render-table*
            (spit out-file)))))
 
 
+;;; --------------------------------------
+;; テーブル定義書(Excel)出力
 (defn- coerce-cell-value
   [v]
   (cond
     (nil? v) ""
     (number? v) (if (= v (double (int v))) (int v) v)
     :else v))
+
 (defn- read-cell
   [sh addr]
   (let [cl (x/select-cell addr sh)
         v (x/read-cell cl)]
     (coerce-cell-value v)))
+
 (defn- select-columns
   [sh m]
   (let [es (x/select-columns m sh)]
@@ -275,6 +243,7 @@
     (if (nil? row)
       (.createRow sh r)
       row)))
+
 (defn- out-val
   [s c r v]
   (let [c (if (number? c)
@@ -338,6 +307,8 @@
                opts))) )
 
 
+;;; --------------------------------------
+;; DB比較
 (defn- diff-html
   [left right]
   (let [dmp (diff_match_patch.)
@@ -360,7 +331,7 @@
     (let [rs (korma/exec-raw (str "SHOW CREATE TABLE " table) :results)]
       ((keyword "Create Table") (first rs)))
     (catch MySQLSyntaxErrorException ex
-            "The table doesn't seem to exist")))
+      "The table doesn't seem to exist")))
 
 (defn- query-ddl
   [sch]
@@ -388,7 +359,7 @@
     (when (validate-schemas schs)
       (connect-db opts)
       (let [diffs (for [sch (apply-default schs)
-                        :let [sql (sql-render sch)
+                        :let [sql (render-table sch)
                               ddl (query-ddl sch)]]
                     (diff-html sql ddl))
             html (mk-html (str
@@ -397,6 +368,9 @@
                             (clojure.string/join "<br/>" diffs)))]
         (spit out-file html)))))
 
+
+;;; --------------------------------------
+;; メイン
 (def cli-options
   [["-H" "--host DBHOST" "DB server"
     :default "localhost"]
@@ -452,3 +426,47 @@
         "sql" (sql arguments options)
         "xls" (xls arguments options)
         "diff" (diff arguments options)))))
+
+(comment
+  (let [wb (x/create-workbook "Price List"
+                              [["Name" "Price"]
+                               ["Foo Widget" 100]
+                               ["Bar Widget" 200]])
+        sheet (x/select-sheet "Price List" wb)
+        header-row (first (x/row-seq sheet))]
+    (x/set-row-style! header-row (x/create-cell-style! wb {:background :yellow
+                                                           :font {:bold true}}))
+    (x/save-workbook! "test.xlsx" wb))
+  (let [wb (x/load-workbook "test.xlsx")
+        s (.cloneSheet wb (.getSheetIndex wb "Price List"))
+        _ (.setSheetName wb (.getSheetIndex wb (.getSheetName s)) "hoge")
+        cell (->> s
+                  (x/select-cell "B3"))]
+    (x/set-cell! cell "YES!")
+    (.removeSheetAt wb (.getSheetIndex wb "Price List"))
+    (x/save-workbook! "yes.xlsx" wb))
+  (let [wb (x/load-workbook-from-resource "template.xlsx")
+        sh (x/select-sheet "table" wb)]
+    #_(read-cell sh "C2")
+    (select-columns sh {:B :hoge :C :fuga}))
+  (with-open [in (java.io.PushbackReader. (clojure.java.io/reader "schema.edn"))]
+    (let [edn-seq (repeatedly #(clojure.edn/read {:eof :the-end} in))]
+      (doall (take-while #(not= :the-end %) edn-seq))))
+  (validate-schemas (read-edn-all "schema.edn"))
+  (sql ["sql" "schema.edn" "out.sql"] {})
+  (xls ["xls" "schema.edn" "out.xlsx"] {})
+  (diff ["diff" "schema.edn" "diff.html"]
+        {:host "localhost"
+         :db "cddlj"
+         :port "3306"
+         :user "root"
+         :pass "mysql"
+         })
+  (let [dmp (diff_match_patch.)
+        diff (.diff_main dmp "Hello World" "Goobye World")
+        _ (.diff_cleanupEfficiency dmp diff)
+        html (.diff_prettyHtml dmp diff)]
+    (spit "diff.html" html))
+  )
+
+
