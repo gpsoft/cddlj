@@ -48,10 +48,17 @@
   (apply
     (fn m [& maps]
       (if (every? map? maps)
-        (apply merge-with m maps)
-        (apply f maps)))
+        (apply merge-with m maps) (apply f maps)))
     maps))
 
 (defn map-vals [f m]
   (into (empty m)
         (for [[k v] m] [k (f v)])))
+
+
+
+(comment
+  (with-open [in (java.io.PushbackReader. (clojure.java.io/reader "schema.edn"))]
+    (let [edn-seq (repeatedly #(clojure.edn/read {:eof :the-end} in))]
+      (doall (take-while #(not= :the-end %) edn-seq))))
+  )

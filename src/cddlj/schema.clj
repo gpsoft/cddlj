@@ -108,3 +108,11 @@
   (let [columns (append-deleted deleted? columns)
         columns (append-timestamps timestamp? columns)]
     (assoc sch :columns columns)))
+
+
+
+
+
+(comment
+  (validate-schemas (read-edn-all "schema.edn"))
+  )
