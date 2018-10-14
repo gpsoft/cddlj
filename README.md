@@ -116,6 +116,9 @@ Example:
 
 ```clojure
 {
+ ;; プロジェクト属性
+ :project #include "./project.edn"
+
  ;; 論理削除用のカラム
  :col-deleted [:deleted {:name "削除フラグ"
                          :type :int
@@ -126,4 +129,18 @@ Example:
                                :type :datetime}
                   :modifed_at {:name "更新日時"
                                :type :datetime}]}
+```
+
+`project.edn`を編集。
+
+```clojure
+{:name "サンプルプロジェクト"
+ :code :cddlj}
+```
+
+REPLで`go`。
+
+```
+$ lein repl
+cddlj.core=> (user/go)
 ```
