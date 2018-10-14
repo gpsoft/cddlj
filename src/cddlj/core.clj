@@ -5,8 +5,9 @@
     [dk.ative.docjure.spreadsheet :as x]
     [korma.core :as korma]
     [korma.db :as db]
-    [aero.core :refer [read-config root-resolver]]
+    [mount.core :as mount]
     [cddlj.util :refer :all]
+    [cddlj.config :refer [config]]
     [cddlj.spec :refer [validate-schemas apply-default]])
   (:import
     name.fraser.neil.plaintext.diff_match_patch
@@ -15,17 +16,7 @@
   (:gen-class))
 
 
-;;; --------------------------------------
-;; コンフィグ
-;; リソースのconfig.ednと
-;; カレントディレクトリのproject.edn
-(def ^:private config
-  (read-config
-    (clojure.java.io/resource "config.edn")
-    {:resolver root-resolver}))
-
 (def ^:private default-collation :utf8_unicode_ci)
-
 
 ;;; --------------------------------------
 ;; スキーマ解釈
@@ -416,6 +407,7 @@
 (defn -main
   ""
   [& args]
+  (mount/start)
   (let [{:keys [options arguments summary]}
         (parse-opts args cli-options)]
     (if (or (:help options)
