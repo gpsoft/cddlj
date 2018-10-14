@@ -120,6 +120,10 @@
        (map (comp render-table schema/append-cols))
        (join-lines "" "")))
 
+(defn table-name-list
+  [schs]
+  (mapv (comp name :table) schs))
+
 (defn sql
   [[edn-path out-file] opts]
   (when-let [schs (schema/load-schemas edn-path)]

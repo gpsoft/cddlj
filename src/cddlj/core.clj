@@ -9,7 +9,6 @@
     [cddlj.db :refer [diff]])
   (:gen-class))
 
-;; メイン
 (def cli-options
   [["-H" "--host DBHOST" "DB server"
     :default "localhost"]
@@ -35,7 +34,7 @@
   (println "Example:")
   (println "  cddlj sql schema.edn out.sql")
   (println "  cddlj xls schema.edn out.xlsx")
-  (println "  cddlj --db cddlj -U root -P mysql diff schema.edn out.html")
+  (println "  cddlj diff schema.edn out.html --db cddlj -U root -P mysql")
   (println "")
   (println " OPTS:")
   (println summary)

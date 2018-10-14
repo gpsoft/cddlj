@@ -111,8 +111,6 @@
 
 
 
-
-
 (comment
   (validate-schemas (read-edn-all "schema.edn"))
   )
