@@ -8,73 +8,13 @@
     [mount.core :as mount]
     [cddlj.util :refer :all]
     [cddlj.config :refer [config]]
-    [cddlj.spec :refer [validate-schemas apply-default]])
+    [cddlj.schema :as schema])
   (:import
     name.fraser.neil.plaintext.diff_match_patch
     org.apache.poi.ss.util.CellReference
     com.mysql.jdbc.exceptions.jdbc4.MySQLSyntaxErrorException)
   (:gen-class))
 
-
-(def ^:private default-collation :utf8_unicode_ci)
-
-;;; --------------------------------------
-;; スキーマ解釈
-(defn- custom-col-type?
-  [k]
-  (let [ts #{:date-str      ; "yyyymmdd"
-             :datetime-str  ; "yyyymmddhhmmss"
-             :time-str4     ; "hhmm"
-             :time-str6}]   ; "hhmmss"
-    (ts k)))
-
-(defn- char-type?
-  [k]
-  (let [ts #{:char
-             :varchar
-             :text}]
-    (ts k)))
-
-(defn- default-to-null-type?
-  [k]
-  (let [ts #{:blob
-             :tinyblob
-             :text}]
-    (not (ts k))))
-
-(defn- custom-col-type
-  "正規形へ"
-  [k]
-  (let [l (k {:date-str 8
-              :datetime-str 14
-              :time-str4 4
-              :time-str6 6})]
-    [:char l default-collation]))
-
-(defn- col-type
-  "正規形へ"
-  [k_or_v]
-  (let [v (if (keyword? k_or_v)
-            (if (custom-col-type? k_or_v)
-              (custom-col-type k_or_v)
-              [k_or_v nil nil])
-            k_or_v)]
-    (let [[t l c] v]
-      (if (char-type? t)
-        [t l (or c default-collation)]
-        v))))
-
-(defn- append-deleted
-  [del? col-seq]
-  (if del?
-    (concat col-seq (:col-deleted config))
-    col-seq))
-
-(defn- append-timestamps
-  [ts? col-seq]
-  (if ts?
-    (concat col-seq (:cols-timestamp config))
-    col-seq))
 
 
 ;;; --------------------------------------
@@ -111,7 +51,7 @@
       (if (string? d)
         (wrap-sq d)
         (str d)))
-    (when (and (default-to-null-type? t)
+    (when (and (schema/default-to-null-type? t)
                (:nullable? fs))
       "DEFAULT NULL")))
 
@@ -129,7 +69,7 @@
 
 (defn- render-column
   [[nm {lnm :name t :type flags :flags default :default cm :comment}]]
-  (let [type-v (col-type t)]
+  (let [type-v (schema/col-type t)]
     (concat-toks
       (wrap-bt (name nm))
       (render-type type-v)
@@ -177,35 +117,31 @@
 
 (defn- render-table
   [{:keys [table collation engine deleted? timestamp? columns] :as sch}]
-  (let [columns (append-deleted deleted? columns)
-        columns (append-timestamps timestamp? columns)]
-    (str (concat-toks
-           "CREATE TABLE"
-           (wrap-bt (name table))
-           (eol "("))
-         (render-create-def columns)
-         (concat-toks
-           ")"
-           (str "ENGINE=" (render-engine engine))
-           "DEFAULT CHARSET=utf8"
-           (str "COLLATE=" (name collation))
-           (str (render-table-comment (:name sch) (:comment sch))))
-         (eol ";"))))
+  (str (concat-toks
+         "CREATE TABLE"
+         (wrap-bt (name table))
+         (eol "("))
+       (render-create-def columns)
+       (concat-toks
+         ")"
+         (str "ENGINE=" (render-engine engine))
+         "DEFAULT CHARSET=utf8"
+         (str "COLLATE=" (name collation))
+         (str (render-table-comment (:name sch) (:comment sch))))
+       (eol ";")))
 
 (defn- render-table*
   [schs]
   (->> schs
-       (map render-table)
+       (map (comp render-table schema/append-cols))
        (join-lines "" "")))
 
 (defn- sql
-  [[_ edn-path out-file] opts]
-  (let [schs (read-edn-all edn-path)]
-    (when (validate-schemas schs)
-      (->> schs
-           apply-default
-           render-table*
-           (spit out-file)))))
+  [[edn-path out-file] opts]
+  (when-let [schs (schema/load-schemas edn-path)]
+    (->> schs
+         render-table*
+         (spit out-file))))
 
 
 ;;; --------------------------------------
@@ -253,7 +189,7 @@
 
 (defn- out-column
   [s ix [nm {lnm :name t :type flags :flags default :default cm :comment}]]
-  (let [[t l c] (col-type t)]
+  (let [[t l c] (schema/col-type t)]
     (x/add-row! s (col-map-to-values
                     {:A (inc ix)
                      :C lnm
@@ -270,10 +206,10 @@
   (let [wb (x/load-workbook-from-resource "template.xlsx")
         {{project-name :name project-code :code} :project} config]
     (dorun
-      (for [{:keys [table collation engine deleted? timestamp? columns] :as sch} schs]
-        (let [s (.cloneSheet wb (.getSheetIndex wb "table"))
-              columns (append-deleted deleted? columns)
-              columns (append-timestamps timestamp? columns)]
+      (for [sch schs
+            :let [sch (schema/append-cols sch)
+                  {:keys [table collation engine deleted? timestamp? columns]} sch]]
+        (let [s (.cloneSheet wb (.getSheetIndex wb "table"))]
           (.setSheetName wb (.getSheetIndex wb (.getSheetName s)) (:name sch))
           ;; A B C D E
           (out-val s "A" 0 (str project-name " エンティティ設計"))
@@ -290,12 +226,11 @@
     (x/save-workbook! out-file wb)))
 
 (defn- xls
-  [[_ edn-path out-file] opts]
-  (let [schs (read-edn-all edn-path)]
-    (when (validate-schemas schs)
-      (xls-out (apply-default schs)
-               out-file
-               opts))) )
+  [[edn-path out-file] opts]
+  (when-let [schs (schema/load-schemas edn-path)]
+    (xls-out schs
+             out-file
+             opts)) )
 
 
 ;;; --------------------------------------
@@ -345,19 +280,18 @@
   (str "<h3 style=\"background:#e6ffe6;\">実際のDB: " caption "</h3>"))
 
 (defn- diff
-  [[_ edn-path out-file] {:keys [host db] :as opts}]
-  (let [schs (read-edn-all edn-path)]
-    (when (validate-schemas schs)
-      (connect-db opts)
-      (let [diffs (for [sch (apply-default schs)
-                        :let [sql (render-table sch)
-                              ddl (query-ddl sch)]]
-                    (diff-html sql ddl))
-            html (mk-html (str
-                            (mk-left-header edn-path)
-                            (mk-right-header (str db "@" host))
-                            (clojure.string/join "<br/>" diffs)))]
-        (spit out-file html)))))
+  [[edn-path out-file] {:keys [host db] :as opts}]
+  (when-let [schs (schema/load-schemas edn-path)]
+    (connect-db opts)
+    (let [diffs (for [sch schs
+                      :let [sql (render-table sch)
+                            ddl (query-ddl sch)]]
+                  (diff-html sql ddl))
+          html (mk-html (str
+                          (mk-left-header edn-path)
+                          (mk-right-header (str db "@" host))
+                          (clojure.string/join "<br/>" diffs)))]
+      (spit out-file html))))
 
 
 ;;; --------------------------------------
@@ -387,7 +321,7 @@
   (println "Example:")
   (println "  cddlj sql schema.edn out.sql")
   (println "  cddlj xls schema.edn out.xlsx")
-  (println "  cddlj --db cddlj -U root -P mysql diff schema.edn diff.html")
+  (println "  cddlj --db cddlj -U root -P mysql diff schema.edn out.html")
   (println "")
   (println " OPTS:")
   (println summary)
@@ -414,10 +348,11 @@
             (invalid-args? arguments)
             (invalid-opts? arguments options))
       (exit-with-usage summary)
-      (case (first arguments)
-        "sql" (sql arguments options)
-        "xls" (xls arguments options)
-        "diff" (diff arguments options)))))
+      (let [[command & args] arguments]
+        (case command
+          "sql" (sql args options)
+          "xls" (xls args options)
+          "diff" (diff args options))))))
 
 (comment
   (let [wb (x/create-workbook "Price List"
@@ -445,9 +380,9 @@
     (let [edn-seq (repeatedly #(clojure.edn/read {:eof :the-end} in))]
       (doall (take-while #(not= :the-end %) edn-seq))))
   (validate-schemas (read-edn-all "schema.edn"))
-  (sql ["sql" "schema.edn" "out.sql"] {})
-  (xls ["xls" "schema.edn" "out.xlsx"] {})
-  (diff ["diff" "schema.edn" "diff.html"]
+  (sql ["schema.edn" "out.sql"] {})
+  (xls ["schema.edn" "out.xlsx"] {})
+  (diff ["schema.edn" "out.html"]
         {:host "localhost"
          :db "cddlj"
          :port "3306"
@@ -458,7 +393,7 @@
         diff (.diff_main dmp "Hello World" "Goobye World")
         _ (.diff_cleanupEfficiency dmp diff)
         html (.diff_prettyHtml dmp diff)]
-    (spit "diff.html" html))
+    (spit "out.html" html))
   )
 
 
