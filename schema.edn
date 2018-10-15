@@ -35,6 +35,9 @@
                         :flags #{:nullable?}}
            :deadline {:name "申込締切日時"
                       :type :datetime-str}
+           :teacher_no {:name "講師No"
+                        :type [:int 10]
+                        }
            ]
 
  ;; 以下、省略可能:

@@ -13,7 +13,8 @@
                  [ch.qos.logback/logback-classic "1.2.3"]
                  [aero "1.1.3"]
                  [mount "0.1.13"]
-                 [hiccup "1.0.5"]]
+                 [hiccup "1.0.5"]
+                 [macroz/tangle "0.2.0"]]
   :java-source-paths ["javasrc"]
   :main ^:skip-aot cddlj.core
   :target-path "target/%s"

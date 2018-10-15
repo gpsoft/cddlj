@@ -5,7 +5,5 @@
 .lein-repl-history
 target/
 
-out.sql
-out.xlsx
-out.html
+out.*
 resources/config.edn

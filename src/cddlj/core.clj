@@ -77,5 +77,52 @@
          :user "root"
          :pass "mysql"
          })
+
+  ;; 解析
+  (require '[cddlj.schema :as schema])
+  (let [schs (schema/load-schemas "schema.edn")
+        cols (fn [{:keys [table columns]}]
+               (map-vals #(assoc % :table-name table) (apply hash-map columns)))
+        schs (map-vals count (group-by first (mapcat seq (map cols schs))))]
+    schs)
+
+  ;; ER diaglam
+  (use 'tangle.core)
+  (require '[clojure.java.io :as io])
+  (let [table-1 {:id "tbl1"
+                 :label [:TABLE {:border 0 :cellspacing 0}
+                         [:TR [:TD {:border 0} "TABLE1"]]
+                         [:TR [:TD {:border 1} "id"]]
+                         [:TR [:TD {:border 1} "name"]]]}
+        table-2 {:id "tbl2"
+                 :label [:TABLE {:border 0 :cellspacing 0}
+                         [:TR [:TD {:border 0} "TABLE2"]]
+                         [:TR [:TD {:border 1} "name"]]
+                         [:TR [:TD {:border 1 :port 2} "table1_id"]]]}
+        table-3 {:id "tbl3"
+                 :label [:TABLE {:border 0 :cellspacing 0}
+                         [:TR [:TD {:border 0} "TABLE3"]]
+                         [:TR [:TD {:border 1} "name"]]
+                         [:TR [:TD {:border 1 :port 3} "table1_id"]]
+                         [:TR [:TD {:border 1 :port 6} "table4_id"]]]}
+        table-4 {:id "tbl4"
+                 :label [:TABLE {:border 0 :cellspacing 0}
+                         [:TR [:TD {:border 0} "TABLE4"]]
+                         [:TR [:TD {:border 1} "name"]]
+                         [:TR [:TD {:border 1 :port 4} "table1_id"]]
+                         [:TR [:TD {:border 1 :port 7} "table2_id"]]
+                         [:TR [:TD {:border 1 :port 5} "table3_id"]]]}
+        dot (tap (graph->dot
+              [table-1 table-2 table-3 table-4]
+              [[:tbl2:2 :tbl1] [:tbl3:3 :tbl1]
+               [:tbl4:4 :tbl1] [:tbl4:5 :tbl3]
+               [:tbl3:6 :tbl4] [:tbl4:7 :tbl2]]
+              {:graph {:rankdir :LR}
+               :node {:shape :box}
+               :node->id #(:id %)
+               :node->descriptor identity
+               :directed? true
+               }))]
+    (io/copy (dot->svg dot) (io/file "out.svg")))
   )
 
