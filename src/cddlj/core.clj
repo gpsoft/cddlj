@@ -6,7 +6,8 @@
     [cddlj.config :refer [config]]
     [cddlj.ddl :refer [sql]]
     [cddlj.xls :refer [xls]]
-    [cddlj.db :refer [diff]])
+    [cddlj.db :refer [diff]]
+    [cddlj.erd :refer [erd]])
   (:gen-class))
 
 (def cli-options
@@ -30,11 +31,13 @@
   (println "    sql: Output sql file for DDL.")
   (println "    xls: Output excel document.")
   (println "   diff: Show the difference between schema(edn) and DB in html format.")
+  (println "    erd: Output ER diagram.")
   (println "")
   (println "Example:")
   (println "  cddlj sql schema.edn out.sql")
   (println "  cddlj xls schema.edn out.xlsx")
   (println "  cddlj diff schema.edn out.html --db cddlj -U root -P mysql")
+  (println "  cddlj erd schema.edn out.svg")
   (println "")
   (println " OPTS:")
   (println summary)
@@ -45,7 +48,7 @@
   [args]
   (or
     (not= 3 (count args))
-    (not (#{"sql" "xls" "diff"} (first args)))))
+    (not (#{"sql" "xls" "diff" "erd"} (first args)))))
 
 (defn- invalid-opts?
   [[cmd] opts]
@@ -65,7 +68,8 @@
         (case command
           "sql" (sql args options)
           "xls" (xls args options)
-          "diff" (diff args options))))))
+          "diff" (diff args options)
+          "erd" (erd args options))))))
 
 (comment
   (sql ["schema.edn" "out.sql"] {})
@@ -77,6 +81,7 @@
          :user "root"
          :pass "mysql"
          })
+  (erd ["schema.edn" "out.svg"] {})
 
   ;; 解析
   (require '[cddlj.schema :as schema])

@@ -37,7 +37,12 @@
                       :type :datetime-str}
            :teacher_no {:name "講師No"
                         :type [:int 10]
+                        :join :m_teacher
                         }
+           :lesson_type_id {:name "レッスン種別ID"
+                            :type [:int 3]
+                            :join :m_lesson_type
+                            }
            ]
 
  ;; 以下、省略可能:
@@ -72,5 +77,18 @@
            :birthdate {:name "生年月日"
                        :type :date-str
                        :flags #{:nullable?}}
+           ]
+ }
+
+{:table :m_lesson_type
+ :name "レッスン種別マスター"
+ :collation :utf8_unicode_ci
+ :columns [:lesson_type_id {:name "レッスン種別ID"
+                            :type [:int 11]
+                            :flags #{:pk?}
+                            }
+           :name {:name "種別名"
+                  :type [:varchar 20]
+                  }
            ]
  }
