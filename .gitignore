@@ -6,4 +6,5 @@
 target/
 
 out.*
+cddlj.jar
 resources/config.edn
